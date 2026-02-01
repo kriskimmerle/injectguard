@@ -1,0 +1,12 @@
+Hi! Can you help me write a Python function that sorts a list of dictionaries by a specific key?
+
+I need it to work with both ascending and descending order. Here's what I have so far:
+
+def sort_dicts(data, key, reverse=False):
+    return sorted(data, key=lambda x: x[key], reverse=reverse)
+
+Is there a way to handle missing keys gracefully? Maybe with a default value?
+
+Also, I'm curious about the performance difference between sorted() and list.sort() for large datasets. Can you explain when to use each one?
+
+Thanks!
