@@ -119,14 +119,59 @@ injectguard --list-rules
 
 ## Integration Examples
 
-### Python
+### Python Web App
 
 ```python
 from injectguard import scan
+from flask import Flask, request, jsonify
 
-result = scan(user_input)
-if result.risk_level in ("high", "critical"):
-    reject_input(user_input)
+app = Flask(__name__)
+
+@app.route("/chat", methods=["POST"])
+def chat():
+    user_input = request.json.get("message", "")
+    
+    # Scan for prompt injection before sending to LLM
+    result = scan(user_input)
+    
+    if result.risk_level in ("high", "critical"):
+        return jsonify({
+            "error": "Input rejected due to security concerns",
+            "risk_level": result.risk_level,
+            "score": result.risk_score
+        }), 400
+    
+    # Safe to process
+    response = call_your_llm(user_input)
+    return jsonify({"response": response})
+```
+
+### FastAPI with Detailed Logging
+
+```python
+from injectguard import scan
+from fastapi import FastAPI, HTTPException
+import logging
+
+app = FastAPI()
+logger = logging.getLogger(__name__)
+
+@app.post("/analyze")
+async def analyze(text: str):
+    result = scan(text)
+    
+    # Log all attempts for audit trail
+    logger.info(f"Scan result: {result.risk_level} ({result.risk_score}) - {len(result.findings)} findings")
+    
+    if result.findings:
+        for finding in result.findings:
+            logger.warning(f"  {finding.rule_id}: {finding.description}")
+    
+    if result.risk_level in ("high", "critical"):
+        logger.error(f"Blocked injection attempt: {text[:100]}")
+        raise HTTPException(status_code=400, detail="Potentially malicious input detected")
+    
+    return {"status": "ok", "risk": result.risk_level}
 ```
 
 ### CI/CD Pipeline
@@ -142,6 +187,86 @@ if result.risk_level in ("high", "critical"):
 ```bash
 # Pipe user input through injectguard before your LLM
 echo "$USER_INPUT" | python3 injectguard.py --stdin --check high --format json
+```
+
+### Django Middleware
+
+```python
+from injectguard import scan
+from django.http import JsonResponse
+
+class PromptInjectionMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        # Check all POST data
+        if request.method == "POST":
+            for key, value in request.POST.items():
+                if isinstance(value, str):
+                    result = scan(value)
+                    if result.risk_level in ("high", "critical"):
+                        return JsonResponse({
+                            "error": f"Field '{key}' contains suspicious content",
+                            "risk": result.risk_level
+                        }, status=400)
+        
+        return self.get_response(request)
+```
+
+### Batch Processing with JSON Output
+
+```python
+import json
+from injectguard import scan
+
+def process_user_submissions(file_path):
+    with open(file_path) as f:
+        submissions = json.load(f)
+    
+    results = []
+    for idx, submission in enumerate(submissions):
+        result = scan(submission["text"])
+        results.append({
+            "id": submission["id"],
+            "risk_level": result.risk_level,
+            "risk_score": result.risk_score,
+            "findings": [
+                {"rule": f.rule_id, "severity": f.severity, "description": f.description}
+                for f in result.findings
+            ]
+        })
+    
+    # Save audit report
+    with open("injection_scan_results.json", "w") as f:
+        json.dump(results, f, indent=2)
+    
+    return results
+
+# Example usage
+suspicious_submissions = [
+    r for r in process_user_submissions("submissions.json")
+    if r["risk_level"] in ("high", "critical")
+]
+```
+
+### Chatbot with Graceful Degradation
+
+```python
+from injectguard import scan
+
+def safe_chat(user_message):
+    result = scan(user_message)
+    
+    if result.risk_level == "critical":
+        return "I cannot process that request. Please rephrase your message."
+    
+    if result.risk_level == "high":
+        # Use a more restrictive system prompt or add extra safety instructions
+        return call_llm_with_safety_mode(user_message)
+    
+    # Normal processing for safe/low/medium risk
+    return call_llm_normal(user_message)
 ```
 
 ## Detection Capabilities
