@@ -646,8 +646,15 @@ def calculate_risk(findings: list[Finding]) -> tuple[int, str]:
 # ---------------------------------------------------------------------------
 
 def scan(text: str, ignore_rules: set[str] | None = None,
-         min_severity: Severity = Severity.INFO) -> ScanResult:
-    """Scan text for prompt injection patterns."""
+         min_severity: Severity = Severity.INFO, strict: bool = False) -> ScanResult:
+    """Scan text for prompt injection patterns.
+    
+    Args:
+        text: Input text to scan
+        ignore_rules: Set of rule IDs to skip
+        min_severity: Minimum severity level to report
+        strict: If True, promote LOW to MEDIUM and INFO to LOW (flags borderline patterns)
+    """
     ignore_rules = ignore_rules or set()
     all_findings: list[Finding] = []
 
@@ -655,6 +662,14 @@ def scan(text: str, ignore_rules: set[str] | None = None,
         if rule_id in ignore_rules:
             continue
         rule_info["fn"](text, all_findings)
+
+    # Apply strict mode severity promotion
+    if strict:
+        for finding in all_findings:
+            if finding.severity == Severity.LOW:
+                finding.severity = Severity.MEDIUM
+            elif finding.severity == Severity.INFO:
+                finding.severity = Severity.LOW
 
     # Filter by severity
     findings = [f for f in all_findings
@@ -795,18 +810,18 @@ def format_json(result: ScanResult, source: str = "<input>") -> str:
 # File scanning
 # ---------------------------------------------------------------------------
 
-def scan_file(filepath: str, ignore_rules: set[str], min_severity: Severity) -> tuple[ScanResult, str]:
+def scan_file(filepath: str, ignore_rules: set[str], min_severity: Severity, strict: bool = False) -> tuple[ScanResult, str]:
     """Scan a file and return (result, content_or_error)."""
     try:
         with open(filepath, "r", encoding="utf-8", errors="replace") as f:
             content = f.read()
-        return scan(content, ignore_rules, min_severity), ""
+        return scan(content, ignore_rules, min_severity, strict), ""
     except (OSError, IOError) as e:
         return ScanResult(text_length=0), str(e)
 
 
 def scan_directory(dirpath: str, extensions: set[str],
-                   ignore_rules: set[str], min_severity: Severity) -> list[tuple[str, ScanResult]]:
+                   ignore_rules: set[str], min_severity: Severity, strict: bool = False) -> list[tuple[str, ScanResult]]:
     """Recursively scan files in a directory."""
     results = []
     for root, dirs, files in os.walk(dirpath):
@@ -818,7 +833,7 @@ def scan_directory(dirpath: str, extensions: set[str],
                 if ext not in extensions:
                     continue
             fpath = os.path.join(root, fname)
-            result, error = scan_file(fpath, ignore_rules, min_severity)
+            result, error = scan_file(fpath, ignore_rules, min_severity, strict)
             if not error and result.findings:
                 results.append((fpath, result))
     return results
@@ -880,6 +895,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Minimum severity to show (default: info)",
     )
     parser.add_argument(
+        "--strict", action="store_true",
+        help="Strict mode: promote LOW to MEDIUM and INFO to LOW severity (flags borderline patterns)",
+    )
+    parser.add_argument(
         "--ignore", default="",
         help="Comma-separated rule IDs to ignore",
     )
@@ -925,7 +944,7 @@ def main(argv: list[str] | None = None) -> int:
         if not os.path.isdir(args.scan_dir):
             print(f"Error: {args.scan_dir} is not a directory", file=sys.stderr)
             return 1
-        dir_results = scan_directory(args.scan_dir, extensions, ignore_rules, min_severity)
+        dir_results = scan_directory(args.scan_dir, extensions, ignore_rules, min_severity, args.strict)
         if args.format == "json":
             all_data = []
             for fpath, result in dir_results:
@@ -956,7 +975,7 @@ def main(argv: list[str] | None = None) -> int:
     outputs = []
 
     for source, content in inputs:
-        result = scan(content, ignore_rules, min_severity)
+        result = scan(content, ignore_rules, min_severity, args.strict)
         if args.format == "json":
             outputs.append(format_json(result, source))
         else:
